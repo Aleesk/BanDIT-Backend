@@ -20,31 +20,25 @@ app.get("/", (req, res) => {
 });
 
 app.post("/sendAlert", async (req, res) => {
-    console.log("[DEBUG] body completo:", req.body);
     try {
         const { patientId } = req.body;
-        console.log("[DEBUG] patientId:", patientId);
+        console.log("[BanDIT] patientId:", patientId);
         const patientDoc = await db.collection("users").doc(patientId).get();
-        console.log("[DEBUG] paciente existe:", patientDoc.exists);
+        console.log("[BanDIT] paciente existe:", patientDoc.exists);
         const patientData = patientDoc.data();
-        console.log("[DEBUG] datos paciente:", patientData);
+        console.log("[BanDIT] datos paciente:", patientData);
 
         const caregiverQuery = await db.collection("users")
             .where("linkedPatientId", "==", patientId)
             .where("role", "==", "caregiver")
             .limit(1)
             .get();
-        console.log("[DEBUG] cuidadores encontrados:", caregiverQuery.size);
-
-        if (!caregiverQuery.empty) {
-            const caregiverData = caregiverQuery.docs[0].data();
-            console.log("[DEBUG] fcmToken del cuidador:", caregiverData.fcmToken);
-        }
+        console.log("[BanDIT] cuidadores encontrados:", caregiverQuery.size);
 
         if (caregiverQuery.empty) {
             return res.status(400).json({
                 success: false,
-                error: "Paciente sin cuidador vinculado"
+                error: "[BanDIT] Paciente sin cuidador vinculado"
             });
         }
 
@@ -55,16 +49,12 @@ app.post("/sendAlert", async (req, res) => {
         if (!token) {
             return res.status(400).json({
                 success: false,
-                error: "El cuidador no tiene token FCM registrado"
+                error: "[BanDIT] El cuidador no tiene token FCM registrado"
             });
         }
 
         const patientName = patientData.name ?? "El paciente";
 
-        // 3. Enviar con campo `notification` (dispara la bandeja del sistema)
-        //    más `data` para que la app pueda leer los valores si está abierta.
-        //    Antes solo se enviaba `data`, lo cual requiere un MessagingService
-        //    personalizado y no muestra nada si la app está cerrada.
         const messageId = await getMessaging().send({
             token,
             notification: {
@@ -79,7 +69,7 @@ app.post("/sendAlert", async (req, res) => {
             android: {
                 priority: "high",
                 notification: {
-                    channelId: "bandit_alerts",   // debe coincidir con el canal creado en Android
+                    channelId: "bandit_alerts",
                     sound: "default",
                     priority: "max",
                     visibility: "public"
@@ -87,7 +77,6 @@ app.post("/sendAlert", async (req, res) => {
             }
         });
 
-        // 4. Registrar la alerta en Firestore
         await db.collection("alerts").add({
             patientId,
             caregiverId: caregiverDoc.id,
