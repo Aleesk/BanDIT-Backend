@@ -22,72 +22,58 @@ app.get("/", (req, res) => {
 app.post("/sendAlert", async (req, res) => {
     try {
         const { patientId } = req.body;
-        console.log("[BanDIT] patientId:", patientId);
         const patientDoc = await db.collection("users").doc(patientId).get();
-        console.log("[BanDIT] paciente existe:", patientDoc.exists);
-        const patientData = patientDoc.data();
-        console.log("[BanDIT] datos paciente:", patientData);
+        if (!patientDoc.exists) {
+            return res.status(404).json({ success: false, error: "Paciente no encontrado" });
+        }
+        const patientName = patientDoc.data().name ?? "El paciente";
 
-        const caregiverQuery = await db.collection("users")
-            .where("linkedPatientId", "==", patientId)
-            .where("role", "==", "caregiver")
-            .limit(1)
+        const caregiversSnap = await db
+            .collection("users").doc(patientId)
+            .collection("caregivers")
+            .where("status", "==", "accepted")
             .get();
-        console.log("[BanDIT] cuidadores encontrados:", caregiverQuery.size);
 
-        if (caregiverQuery.empty) {
-            return res.status(400).json({
-                success: false,
-                error: "[BanDIT] Paciente sin cuidador vinculado"
-            });
+        if (caregiversSnap.empty) {
+            return res.status(400).json({ success: false, error: "Paciente sin cuidadores vinculados" });
         }
 
-        const caregiverDoc = caregiverQuery.docs[0];
-        const caregiverData = caregiverDoc.data();
-        const token = caregiverData.fcmToken;
-
-        if (!token) {
-            return res.status(400).json({
-                success: false,
-                error: "[BanDIT] El cuidador no tiene token FCM registrado"
-            });
+        const caregiverIds = caregiversSnap.docs.map(d => d.id);
+        const tokens = [];
+        for (const caregiverId of caregiverIds) {
+            const cgDoc = await db.collection("users").doc(caregiverId).get();
+            const token = cgDoc.data()?.fcmToken;
+            if (token) tokens.push(token);
         }
 
-        const patientName = patientData.name ?? "El paciente";
+        if (tokens.length === 0) {
+            return res.status(400).json({ success: false, error: "Ningún cuidador tiene token FCM" });
+        }
 
-        const messageId = await getMessaging().send({
-            token,
+        const response = await getMessaging().sendEachForMulticast({
+            tokens,
             notification: {
                 title: "🚨 Alerta BanDIT",
                 body: `${patientName} necesita ayuda urgente`
             },
-            data: {
-                patientId,
-                patientName,
-                type: "CRISIS_ALERT"
-            },
+            data: { patientId, patientName, type: "CRISIS_ALERT" },
             android: {
                 priority: "high",
-                notification: {
-                    channelId: "bandit_alerts",
-                    sound: "default",
-                    priority: "max",
-                    visibility: "public"
-                }
+                notification: { channelId: "bandit_alerts", sound: "default", priority: "max", visibility: "public" }
             }
         });
 
-        await db.collection("alerts").add({
-            patientId,
-            caregiverId: caregiverDoc.id,
-            patientName,
-            createdAt: new Date(),
-            status: "sent"
+        await db.collection("users").doc(patientId).collection("alerts").add({
+            type: "auto",
+            triggeredAt: new Date(),
+            resolvedAt: null,
+            notifiedCaregivers: caregiverIds,
+            successCount: response.successCount,
+            failureCount: response.failureCount
         });
 
-        console.log(`[BanDIT] Alerta enviada a ${caregiverData.name} (${messageId})`);
-
-        res.json({ success: true, messageId });
+        console.log(`[BanDIT] Alerta enviada a ${response.successCount}/${tokens.length} cuidadores`);
+        res.json({ success: true, successCount: response.successCount, failureCount: response.failureCount });
 
     } catch (error) {
         console.error("[BanDIT] Error en /sendAlert:", error);
