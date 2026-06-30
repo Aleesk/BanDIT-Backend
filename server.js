@@ -26,7 +26,8 @@ app.post("/sendAlert", async (req, res) => {
         if (!patientDoc.exists) {
             return res.status(404).json({ success: false, error: "Paciente no encontrado" });
         }
-        const patientName = patientDoc.data().name ?? "El paciente";
+        const patientData = patientDoc.data();
+        const patientName = patientData.name ?? "El paciente";
 
         const caregiversSnap = await db
             .collection("users").doc(patientId)
@@ -63,17 +64,20 @@ app.post("/sendAlert", async (req, res) => {
             }
         });
 
-        await db.collection("users").doc(patientId).collection("alerts").add({
+        const alertRef = await db.collection("users").doc(patientId).collection("alerts").add({
             type: "auto",
             triggeredAt: new Date(),
             resolvedAt: null,
+            attendedBy: null,
+            attendedByName: null,
             notifiedCaregivers: caregiverIds,
             successCount: response.successCount,
-            failureCount: response.failureCount
+            failureCount: response.failureCount,
+            location: patientData.location ?? null   // 👈 snapshot de ubicación
         });
 
-        console.log(`[BanDIT] Alerta enviada a ${response.successCount}/${tokens.length} cuidadores`);
-        res.json({ success: true, successCount: response.successCount, failureCount: response.failureCount });
+        console.log(`[BanDIT] Alerta ${alertRef.id} enviada a ${response.successCount}/${tokens.length} cuidadores`);
+        res.json({ success: true, alertId: alertRef.id, successCount: response.successCount, failureCount: response.failureCount });
 
     } catch (error) {
         console.error("[BanDIT] Error en /sendAlert:", error);
